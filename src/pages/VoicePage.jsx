@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, Suspense, lazy } from 'react'
-import { FiMic, FiX } from 'react-icons/fi'
+import { FiMic, FiX, FiVolume2 } from 'react-icons/fi'
+import { motion, AnimatePresence } from 'framer-motion'
 import { generateResearch } from '../data/research'
 import { useAuth } from '../hooks/useAuth'
 
@@ -9,6 +10,7 @@ export function VoicePage() {
   const recognitionRef = useRef(null)
   const { profile } = useAuth()
   const [voiceState, setVoiceState] = useState('idle')
+  const [transcript, setTranscript] = useState('')
   const supportsSpeech = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window
 
   useEffect(() => {
@@ -17,6 +19,57 @@ export function VoicePage() {
       window.speechSynthesis?.cancel?.()
     }
   }, [])
+
+  async function sarvamTTS(text) {
+    console.log('[Sarvam AI] Requesting synthesis for text:', text)
+    console.log('[Sarvam AI] Using voice model: Shubh (Hindi/Multilingual)')
+    
+    try {
+      const response = await fetch('https://api.sarvam.ai/text-to-speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-subscription-key': import.meta.env.VITE_SARVAM_API_KEY
+        },
+        body: JSON.stringify({
+          inputs: [text],
+          target_language_code: profile?.language === 'Hindi' ? 'hi-IN' : 'en-IN',
+          speaker: 'shubh',
+          pitch: 0,
+          pace: 1.0,
+          loudness: 1.5,
+          speech_sample_rate: 22050,
+          enable_punctuation_breaks: true,
+          model: 'bulbul:v1'
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        const audio = new Audio(`data:audio/wav;base64,${data.audios[0]}`)
+        audio.onplay = () => setVoiceState('speaking')
+        audio.onended = () => setVoiceState('idle')
+        await audio.play()
+        console.log('[Sarvam AI] Synthesis successful, playing audio.')
+      } else {
+        throw new Error('Sarvam AI synthesis failed')
+      }
+    } catch (error) {
+      console.error('[Sarvam AI] TTS Error:', error)
+      fallbackTTS(text)
+    }
+  }
+
+  function fallbackTTS(text) {
+    console.log('[Codex] Falling back to Web Speech API for synthesis.')
+    window.speechSynthesis.cancel()
+    const utterance = new SynthesisUtterance(text)
+    utterance.lang = profile?.language === 'Hindi' ? 'hi-IN' : 'en-IN'
+    utterance.rate = 0.95
+    utterance.onstart = () => setVoiceState('speaking')
+    utterance.onend = () => setVoiceState('idle')
+    window.speechSynthesis.speak(utterance)
+  }
 
   function startVoice() {
     if (!supportsSpeech) {
@@ -28,80 +81,100 @@ export function VoicePage() {
     const recognition = new SpeechRecognition()
     recognition.lang = profile?.language === 'Hindi' ? 'hi-IN' : 'en-IN'
     recognition.continuous = false
-    recognition.interimResults = false
-    recognition.onstart = () => setVoiceState('listening')
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      setVoiceState('thinking')
-      window.setTimeout(() => {
-        const run = generateResearch(transcript, profile?.language || 'English')
-        speak(run.summary)
-      }, 900)
+    recognition.interimResults = true
+    
+    recognition.onstart = () => {
+      setVoiceState('listening')
+      setTranscript('')
     }
+
+    recognition.onresult = (event) => {
+      const current = event.results[0][0].transcript
+      setTranscript(current)
+      if (event.results[0].isFinal) {
+        setVoiceState('thinking')
+        const run = generateResearch(current, profile?.language || 'English')
+        sarvamTTS(run.summary)
+      }
+    }
+
     recognition.onend = () => {
       setVoiceState((state) => (state === 'listening' ? 'idle' : state))
     }
+    
     recognitionRef.current = recognition
     recognition.start()
-  }
-
-  function speak(text) {
-    if (!('speechSynthesis' in window)) {
-      setVoiceState('idle')
-      return
-    }
-    window.speechSynthesis.cancel()
-    const utterance = new SynthesisUtterance(text)
-    utterance.lang = profile?.language === 'Hindi' ? 'hi-IN' : 'en-IN'
-    utterance.rate = 0.95
-    utterance.onstart = () => setVoiceState('speaking')
-    utterance.onend = () => setVoiceState('idle')
-    window.speechSynthesis.speak(utterance)
   }
 
   function cancelVoice() {
     recognitionRef.current?.stop?.()
     window.speechSynthesis?.cancel?.()
     setVoiceState('idle')
+    setTranscript('')
   }
 
   return (
-    <section className="voice-minimal-page" aria-label="Voice research">
+    <motion.section 
+      className="voice-minimal-page"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5 }}
+    >
       <div className="voice-3d-container">
         <Suspense fallback={<div className="voice-loading">Loading Orb...</div>}>
           <Spline scene="/voice.splinecode" />
         </Suspense>
+        
+        <AnimatePresence>
+          {transcript && (
+            <motion.div 
+              className="live-transcript"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              {transcript}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       
       <div className="voice-minimal-actions">
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           type="button" 
           className={`voice-primary ${voiceState === 'listening' ? 'active' : ''}`} 
           onClick={startVoice} 
-          aria-label="Start voice research"
         >
           <FiMic aria-hidden="true" />
-        </button>
-        <button 
+        </motion.button>
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           type="button" 
           className="voice-cancel" 
           onClick={cancelVoice} 
-          aria-label="Cancel voice research"
         >
           <FiX aria-hidden="true" />
-        </button>
+        </motion.button>
       </div>
 
-      <p className="voice-state-label">
+      <motion.p 
+        key={voiceState}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="voice-state-label"
+      >
         {voiceState === 'listening' && 'Listening...'}
-        {voiceState === 'thinking' && 'Thinking...'}
-        {voiceState === 'speaking' && 'Speaking...'}
-        {voiceState === 'idle' && 'Tap to speak'}
+        {voiceState === 'thinking' && 'Analyzing...'}
+        {voiceState === 'speaking' && 'Codex speaking (Shubh)'}
+        {voiceState === 'idle' && 'Orchid Agent Ready'}
         {voiceState === 'unsupported' && 'Voice not supported'}
-      </p>
-    </section>
+      </motion.p>
+    </motion.section>
   )
 }
 
-// Fallback for missing SpeechSynthesisUtterance in some environments during SSR/Testing
 const SynthesisUtterance = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : class {}

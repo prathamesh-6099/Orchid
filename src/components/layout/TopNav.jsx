@@ -15,8 +15,7 @@ export function TopNav({ theme, onThemeChange }) {
         <NavLink to="/">About</NavLink>
         <NavLink to="/research">Research</NavLink>
         <NavLink to="/voice">Orchid</NavLink>
-        <NavLink to="/settings">Settings</NavLink>
-        <NavLink to="/profile">Profile</NavLink>
+        <NavLink to="/account">Account</NavLink>
       </nav>
       <div className="nav-actions">
         {user ? (
